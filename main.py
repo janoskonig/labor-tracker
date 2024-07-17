@@ -13,25 +13,47 @@ import pandas as pd
 from flask import Flask, render_template, request, jsonify, redirect
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
+import time
+import threading
+
+
 
 load_dotenv(".env")
 
 app = Flask(__name__)
-# SQLAlchemy engine for connection
-def get_db_engine():
-    user = os.getenv('DB_USER')
-    password = os.getenv('DB_PASSWORD')
-    host = os.getenv('DB_HOST')
-    db = os.getenv('DB_NAME')
-    connection_str = f"mysql+mysqlconnector://{user}:{password}@{host}/{db}"
-    engine = create_engine(connection_str)
-    return engine
+host = os.getenv("DB_HOST")
+port = os.getenv("DB_PORT", 3306)
+user = os.getenv("DB_USER")
+password = os.getenv("DB_PASSWORD")
+database = os.getenv("DB_NAME")
 
+# SQLAlchemy database engine
+def create_db_engine():
+    return create_engine(f'mysql+mysqlconnector://{user}:{password}@{host}:{port}/{database}')
+
+engine = create_db_engine()
+
+def ping_db():
+    global engine
+    while True:
+        time.sleep(600)  # Sleep for 10 minutes
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+        except OperationalError as err:
+            print(f"Error pinging MySQL: {err}")
+            engine = create_db_engine()
+
+# Start the background thread to ping the database
+thread = threading.Thread(target=ping_db)
+thread.daemon = True
+thread.start()
 # Save contraction to database
 def save_contraction_to_db(start, end, duration, severity):
     try:
         print(f"Inserting data into DB: start={start}, end={end}, duration={duration}, severity={severity}")  # Debug
-        engine = get_db_engine()
+        engine = create_db_engine()
         with engine.connect() as connection:
             query = text("INSERT INTO contractions (start_time, end_time, duration, severity) VALUES (:start, :end, :duration, :severity)")
             connection.execute(query, {"start": start, "end": end, "duration": duration, "severity": severity})
@@ -43,7 +65,7 @@ def save_contraction_to_db(start, end, duration, severity):
 # Fetch contractions from database
 def fetch_contractions_from_db():
     try:
-        engine = get_db_engine()
+        engine = create_db_engine()
         df = pd.read_sql('SELECT * FROM contractions', con=engine)
         print("Data fetched successfully")  # Debug
         return df
@@ -123,7 +145,7 @@ def reset():
     global contractions
     contractions = []
     try:
-        engine = get_db_engine()
+        engine = create_db_engine()
         with engine.connect() as connection:
             connection.execute(text("DELETE FROM contractions"))
             connection.commit()  # Explicit commit
